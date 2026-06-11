@@ -409,7 +409,7 @@ function renderClients() {
       <td>
         <div class="table-actions">
           <button class="btn-edit" onclick="openEditClient('${c.id}')">✏️ עריכה</button>
-          <button class="btn-danger" onclick="deleteClient(${c.id}, '${c.first_name} ${c.last_name}')">🗑️</button>
+          <button class="btn-danger" onclick="deleteClient('${c.id}', '${c.first_name} ${c.last_name}')">🗑️</button>
         </div>
       </td>
     </tr>
