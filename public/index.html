@@ -764,7 +764,7 @@ async function loadUsers() {
         <td>${u.full_name}</td>
         <td>${u.username}</td>
         <td>${formatDate(u.created_at)}</td>
-        <td><button class="btn-danger" onclick="deleteUser(${u.id}, '${u.full_name}')">🗑️ מחק</button></td>
+        <td><button class="btn-danger" onclick="deleteUser('${u.id}', '${u.full_name}')">🗑️ מחק</button></td>
       </tr>
     `).join('');
   } catch(e) { toast(e.message, false); }
