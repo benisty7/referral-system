@@ -400,7 +400,7 @@ function renderClients() {
   tbody.innerHTML = filtered.map((c, i) => `
     <tr>
       <td>${i + 1}</td>
-      <td><span class="client-name-link" onclick="openClientCard(${c.id})">${c.first_name} ${c.last_name}</span></td>
+      <td><span class="client-name-link" onclick="openClientCard('${c.id}')">${c.first_name} ${c.last_name}</span></td>
       <td>${c.city || ''}</td>
       <td>${c.phone || ''}</td>
       <td>${c.referrer_name || ''}</td>
@@ -408,7 +408,7 @@ function renderClients() {
       <td>${formatDateTime(c.updated_at)}</td>
       <td>
         <div class="table-actions">
-          <button class="btn-edit" onclick="openEditClient(${c.id})">✏️ עריכה</button>
+          <button class="btn-edit" onclick="openEditClient('${c.id}')">✏️ עריכה</button>
           <button class="btn-danger" onclick="deleteClient(${c.id}, '${c.first_name} ${c.last_name}')">🗑️</button>
         </div>
       </td>
@@ -524,7 +524,7 @@ async function loadJournal() {
           <div style="font-size:.8rem;color:#718096">
             <strong>${e.author_name || 'לא ידוע'}</strong> | ${formatDateTime(e.created_at)}
           </div>
-          <button class="btn-danger" onclick="deleteJournalEntry(${e.id})">🗑️</button>
+          <button class="btn-danger" onclick="deleteJournalEntry('${e.id}')">🗑️</button>
         </div>
         <div style="white-space:pre-wrap;line-height:1.6">${escHtml(e.note)}</div>
       </div>
@@ -570,8 +570,8 @@ function renderDates() {
       <td>${escHtml(d.notes || '')}</td>
       <td>
         <div class="table-actions">
-          <button class="btn-edit" onclick="editDateRow(${d.id})">✏️</button>
-          <button class="btn-danger" onclick="deleteDateRow(${d.id})">🗑️</button>
+          <button class="btn-edit" onclick="editDateRow('${d.id}')">✏️</button>
+          <button class="btn-danger" onclick="deleteDateRow('${d.id}')">🗑️</button>
         </div>
       </td>
     </tr>
@@ -620,7 +620,7 @@ function editDateRow(id) {
     <td><input type="text" id="dr-notes-e${id}" value="${escAttr(d.notes || '')}"></td>
     <td>
       <div class="table-actions">
-        <button class="btn-success" onclick="updateDateRow(${id})">✔</button>
+        <button class="btn-success" onclick="updateDateRow('${id}')">✔</button>
         <button class="btn-secondary" onclick="renderDates()">✕</button>
       </div>
     </td>
@@ -667,8 +667,8 @@ function renderProducts() {
       <td>${formatDate(p.created_at)}</td>
       <td>
         <div class="table-actions">
-          <button class="btn-edit" onclick="editProductRow(${p.id})">✏️</button>
-          <button class="btn-danger" onclick="deleteProductRow(${p.id})">🗑️</button>
+          <button class="btn-edit" onclick="editProductRow('${p.id}')">✏️</button>
+          <button class="btn-danger" onclick="deleteProductRow('${p.id}')">🗑️</button>
         </div>
       </td>
     </tr>
@@ -719,7 +719,7 @@ function editProductRow(id) {
     <td>${formatDate(p.created_at)}</td>
     <td>
       <div class="table-actions">
-        <button class="btn-success" onclick="updateProductRow(${id})">✔</button>
+        <button class="btn-success" onclick="updateProductRow('${id}')">✔</button>
         <button class="btn-secondary" onclick="renderProducts()">✕</button>
       </div>
     </td>
