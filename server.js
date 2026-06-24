@@ -40,7 +40,8 @@ const mailer = SMTP_PASSWORD
       host: 'eb-law.org.il',
       port: 587,
       secure: false,
-      auth: { user: SMTP_USER, pass: SMTP_PASSWORD }
+      auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
+      tls: { rejectUnauthorized: false }
     })
   : null;
 
