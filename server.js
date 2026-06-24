@@ -1,8 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,13 +22,60 @@ async function connectDB() {
   db = client.db();
   console.log('Connected to MongoDB');
 
-  // Create default admin if no users
   const count = await db.collection('users').countDocuments();
   if (count === 0) {
     const hash = await bcrypt.hash('admin123', 10);
     await db.collection('users').insertOne({ username: 'admin', password_hash: hash, full_name: 'מנהל ראשי', created_at: now() });
     console.log('Created default user: admin / admin123');
   }
+}
+
+// ── Email ──────────────────────────────────────────────────────────────────────
+const SMTP_USER = process.env.SMTP_USER || 'office@eb-law.org.il';
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'office@eb-law.org.il';
+
+const mailer = SMTP_PASSWORD
+  ? nodemailer.createTransport({
+      host: 'eb-law.org.il',
+      port: 587,
+      secure: false,
+      auth: { user: SMTP_USER, pass: SMTP_PASSWORD }
+    })
+  : null;
+
+async function sendEmail({ to, subject, html }) {
+  if (!mailer) return;
+  const recipients = [ADMIN_EMAIL];
+  if (to && to !== ADMIN_EMAIL) recipients.push(to);
+  try {
+    await mailer.sendMail({
+      from: `"לוח הפניות - אלי בניסטי" <${SMTP_USER}>`,
+      to: recipients.join(', '),
+      subject,
+      html
+    });
+  } catch (e) {
+    console.error('Email error:', e.message);
+  }
+}
+
+function emailTemplate(title, rows) {
+  const rowsHtml = rows.map(([k, v]) =>
+    `<tr><td style="padding:6px 12px;font-weight:bold;background:#f0f4f8;border:1px solid #ddd">${k}</td><td style="padding:6px 12px;border:1px solid #ddd">${v || '—'}</td></tr>`
+  ).join('');
+  return `
+    <div style="font-family:Arial,sans-serif;direction:rtl;max-width:560px;margin:0 auto">
+      <div style="background:#1F4E79;color:#fff;padding:16px 24px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">⚖️ לוח הפניות המשפטיות</h2>
+        <p style="margin:4px 0 0;font-size:13px;opacity:.85">${title}</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:16px;border-radius:0 0 8px 8px">
+        <table style="width:100%;border-collapse:collapse;font-size:14px">${rowsHtml}</table>
+        <p style="margin:16px 0 0;font-size:12px;color:#888">אלי בניסטי, עו"ד וסוכן ביטוח פנסיוני | 054-5285230</p>
+      </div>
+    </div>
+  `;
 }
 
 function now() { return new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }); }
@@ -41,7 +90,6 @@ function auth(req, res, next) {
   catch { res.status(401).json({ error: 'פג תוקף ההתחברות' }); }
 }
 
-// Auth
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -76,7 +124,6 @@ app.delete('/api/users/:id', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Clients
 app.get('/api/clients', auth, async (req, res) => {
   try {
     const clients = await db.collection('clients').find({}).sort({ updated_at: -1 }).toArray();
@@ -94,17 +141,29 @@ app.get('/api/clients/:id', auth, async (req, res) => {
 
 app.post('/api/clients', auth, async (req, res) => {
   try {
-    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name } = req.body;
+    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email } = req.body;
     if (!first_name || !last_name) return res.status(400).json({ error: 'שם פרטי ושם משפחה נדרשים' });
-    const r = await db.collection('clients').insertOne({ first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referral_date: today(), updated_at: now(), created_by: req.user.id });
+    const r = await db.collection('clients').insertOne({ first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email, referral_date: today(), updated_at: now(), created_by: req.user.id });
     res.json({ id: r.insertedId.toString() });
+    sendEmail({
+      to: referrer_email,
+      subject: `לקוח חדש נוסף – ${first_name} ${last_name}`,
+      html: emailTemplate('לקוח חדש נוסף למערכת', [
+        ['שם מלא', `${first_name} ${last_name}`],
+        ['עיר', city],
+        ['טלפון', phone],
+        ['מפנה', referrer_name],
+        ['תאריך הפניה', today()],
+        ['נוסף ע"י', req.user.full_name],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/clients/:id', auth, async (req, res) => {
   try {
-    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name } = req.body;
-    await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, updated_at: now() } });
+    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email } = req.body;
+    await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email, updated_at: now() } });
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -122,7 +181,6 @@ app.delete('/api/clients/:id', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Journal
 app.get('/api/clients/:id/journal', auth, async (req, res) => {
   try {
     const entries = await db.collection('journal').find({ client_id: req.params.id }).sort({ created_at: -1 }).toArray();
@@ -137,6 +195,18 @@ app.post('/api/clients/:id/journal', auth, async (req, res) => {
     const r = await db.collection('journal').insertOne({ client_id: req.params.id, note, created_by: req.user.id, author_name: req.user.full_name, created_at: now() });
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
+    const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
+    if (c) sendEmail({
+      to: c.referrer_email,
+      subject: `עדכון יומן – ${c.first_name} ${c.last_name}`,
+      html: emailTemplate('הערה חדשה נוספה ליומן הטיפול', [
+        ['לקוח', `${c.first_name} ${c.last_name}`],
+        ['מפנה', c.referrer_name],
+        ['הערה', note],
+        ['נוסף ע"י', req.user.full_name],
+        ['תאריך', now()],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -145,7 +215,6 @@ app.delete('/api/clients/:id/journal/:entryId', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Important Dates
 app.get('/api/clients/:id/dates', auth, async (req, res) => {
   try {
     const dates = await db.collection('dates').find({ client_id: req.params.id }).sort({ date: 1 }).toArray();
@@ -159,6 +228,19 @@ app.post('/api/clients/:id/dates', auth, async (req, res) => {
     const r = await db.collection('dates').insertOne({ client_id: req.params.id, date, time, notes, created_at: now() });
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
+    const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
+    if (c) sendEmail({
+      to: c.referrer_email,
+      subject: `מועד חשוב נוסף – ${c.first_name} ${c.last_name}`,
+      html: emailTemplate('תאריך חשוב נוסף ללקוח', [
+        ['לקוח', `${c.first_name} ${c.last_name}`],
+        ['מפנה', c.referrer_name],
+        ['תאריך', date],
+        ['שעה', time],
+        ['הערות', notes],
+        ['נוסף ע"י', req.user.full_name],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -175,7 +257,6 @@ app.delete('/api/clients/:id/dates/:dateId', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Products
 app.get('/api/clients/:id/products', auth, async (req, res) => {
   try {
     const products = await db.collection('products').find({ client_id: req.params.id }).sort({ created_at: -1 }).toArray();
@@ -189,6 +270,19 @@ app.post('/api/clients/:id/products', auth, async (req, res) => {
     const r = await db.collection('products').insertOne({ client_id: req.params.id, product_name, price, status: status || 'ממתין', created_at: now() });
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
+    const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
+    if (c) sendEmail({
+      to: c.referrer_email,
+      subject: `מוצר חדש נוסף – ${c.first_name} ${c.last_name}`,
+      html: emailTemplate('מוצר חדש נוסף ללקוח', [
+        ['לקוח', `${c.first_name} ${c.last_name}`],
+        ['מפנה', c.referrer_name],
+        ['מוצר', product_name],
+        ['מחיר', price],
+        ['סטטוס', status || 'ממתין'],
+        ['נוסף ע"י', req.user.full_name],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -197,6 +291,19 @@ app.put('/api/clients/:id/products/:productId', auth, async (req, res) => {
     const { product_name, price, status } = req.body;
     await db.collection('products').updateOne({ _id: oid(req.params.productId) }, { $set: { product_name, price, status } });
     res.json({ success: true });
+    const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
+    if (c) sendEmail({
+      to: c.referrer_email,
+      subject: `עדכון מוצר – ${c.first_name} ${c.last_name}`,
+      html: emailTemplate('סטטוס מוצר עודכן', [
+        ['לקוח', `${c.first_name} ${c.last_name}`],
+        ['מפנה', c.referrer_name],
+        ['מוצר', product_name],
+        ['מחיר', price],
+        ['סטטוס חדש', status],
+        ['עודכן ע"י', req.user.full_name],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
