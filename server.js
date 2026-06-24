@@ -38,8 +38,8 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'office@eb-law.org.il';
 const mailer = SMTP_PASSWORD
   ? nodemailer.createTransport({
       host: 'webmail.eb-law.org.il',
-      port: 587,
-      secure: false,
+      port: 465,
+      secure: true,
       auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
       tls: { rejectUnauthorized: false }
     })
