@@ -45,6 +45,15 @@ const mailer = SMTP_PASSWORD
     })
   : null;
 
+// מחפש את המייל של המפנה לפי שם מלא או שם משתמש (username = כתובת מייל)
+async function getReferrerEmail(referrerName) {
+  if (!referrerName || !db) return null;
+  const user = await db.collection('users').findOne({
+    $or: [{ full_name: referrerName }, { username: referrerName }]
+  });
+  return user?.username || null;
+}
+
 async function sendEmail({ to, subject, html }) {
   if (!mailer) return;
   const recipients = [ADMIN_EMAIL];
@@ -56,6 +65,7 @@ async function sendEmail({ to, subject, html }) {
       subject,
       html
     });
+    console.log('Email sent to:', recipients.join(', '));
   } catch (e) {
     console.error('Email error:', e.message);
   }
@@ -91,6 +101,7 @@ function auth(req, res, next) {
   catch { res.status(401).json({ error: 'פג תוקף ההתחברות' }); }
 }
 
+// ── Auth ───────────────────────────────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -125,6 +136,7 @@ app.delete('/api/users/:id', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Clients ────────────────────────────────────────────────────────────────────
 app.get('/api/clients', auth, async (req, res) => {
   try {
     const clients = await db.collection('clients').find({}).sort({ updated_at: -1 }).toArray();
@@ -142,12 +154,16 @@ app.get('/api/clients/:id', auth, async (req, res) => {
 
 app.post('/api/clients', auth, async (req, res) => {
   try {
-    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email } = req.body;
+    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name } = req.body;
     if (!first_name || !last_name) return res.status(400).json({ error: 'שם פרטי ושם משפחה נדרשים' });
-    const r = await db.collection('clients').insertOne({ first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email, referral_date: today(), updated_at: now(), created_by: req.user.id });
+    const r = await db.collection('clients').insertOne({
+      first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name,
+      referral_date: today(), updated_at: now(), created_by: req.user.id
+    });
     res.json({ id: r.insertedId.toString() });
+    const referrerEmail = await getReferrerEmail(referrer_name);
     sendEmail({
-      to: referrer_email,
+      to: referrerEmail,
       subject: `לקוח חדש נוסף – ${first_name} ${last_name}`,
       html: emailTemplate('לקוח חדש נוסף למערכת', [
         ['שם מלא', `${first_name} ${last_name}`],
@@ -163,9 +179,25 @@ app.post('/api/clients', auth, async (req, res) => {
 
 app.put('/api/clients/:id', auth, async (req, res) => {
   try {
-    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email } = req.body;
-    await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, referrer_email, updated_at: now() } });
+    const { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name } = req.body;
+    await db.collection('clients').updateOne(
+      { _id: oid(req.params.id) },
+      { $set: { first_name, last_name, city, id_number, phone, email, spouse_name, referrer_name, updated_at: now() } }
+    );
     res.json({ success: true });
+    const referrerEmail = await getReferrerEmail(referrer_name);
+    sendEmail({
+      to: referrerEmail,
+      subject: `פרטי לקוח עודכנו – ${first_name} ${last_name}`,
+      html: emailTemplate('פרטי לקוח עודכנו', [
+        ['שם מלא', `${first_name} ${last_name}`],
+        ['עיר', city],
+        ['טלפון', phone],
+        ['מפנה', referrer_name],
+        ['עודכן ע"י', req.user.full_name],
+        ['תאריך', now()],
+      ])
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -182,6 +214,7 @@ app.delete('/api/clients/:id', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Journal ────────────────────────────────────────────────────────────────────
 app.get('/api/clients/:id/journal', auth, async (req, res) => {
   try {
     const entries = await db.collection('journal').find({ client_id: req.params.id }).sort({ created_at: -1 }).toArray();
@@ -193,21 +226,26 @@ app.post('/api/clients/:id/journal', auth, async (req, res) => {
   try {
     const { note } = req.body;
     if (!note) return res.status(400).json({ error: 'הערה נדרשת' });
-    const r = await db.collection('journal').insertOne({ client_id: req.params.id, note, created_by: req.user.id, author_name: req.user.full_name, created_at: now() });
+    const r = await db.collection('journal').insertOne({
+      client_id: req.params.id, note, created_by: req.user.id, author_name: req.user.full_name, created_at: now()
+    });
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
     const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
-    if (c) sendEmail({
-      to: c.referrer_email,
-      subject: `עדכון יומן – ${c.first_name} ${c.last_name}`,
-      html: emailTemplate('הערה חדשה נוספה ליומן הטיפול', [
-        ['לקוח', `${c.first_name} ${c.last_name}`],
-        ['מפנה', c.referrer_name],
-        ['הערה', note],
-        ['נוסף ע"י', req.user.full_name],
-        ['תאריך', now()],
-      ])
-    });
+    if (c) {
+      const referrerEmail = await getReferrerEmail(c.referrer_name);
+      sendEmail({
+        to: referrerEmail,
+        subject: `עדכון יומן – ${c.first_name} ${c.last_name}`,
+        html: emailTemplate('הערה חדשה נוספה ליומן הטיפול', [
+          ['לקוח', `${c.first_name} ${c.last_name}`],
+          ['מפנה', c.referrer_name],
+          ['הערה', note],
+          ['נוסף ע"י', req.user.full_name],
+          ['תאריך', now()],
+        ])
+      });
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -216,6 +254,7 @@ app.delete('/api/clients/:id/journal/:entryId', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Important Dates ────────────────────────────────────────────────────────────
 app.get('/api/clients/:id/dates', auth, async (req, res) => {
   try {
     const dates = await db.collection('dates').find({ client_id: req.params.id }).sort({ date: 1 }).toArray();
@@ -230,18 +269,21 @@ app.post('/api/clients/:id/dates', auth, async (req, res) => {
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
     const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
-    if (c) sendEmail({
-      to: c.referrer_email,
-      subject: `מועד חשוב נוסף – ${c.first_name} ${c.last_name}`,
-      html: emailTemplate('תאריך חשוב נוסף ללקוח', [
-        ['לקוח', `${c.first_name} ${c.last_name}`],
-        ['מפנה', c.referrer_name],
-        ['תאריך', date],
-        ['שעה', time],
-        ['הערות', notes],
-        ['נוסף ע"י', req.user.full_name],
-      ])
-    });
+    if (c) {
+      const referrerEmail = await getReferrerEmail(c.referrer_name);
+      sendEmail({
+        to: referrerEmail,
+        subject: `מועד חשוב נוסף – ${c.first_name} ${c.last_name}`,
+        html: emailTemplate('תאריך חשוב נוסף ללקוח', [
+          ['לקוח', `${c.first_name} ${c.last_name}`],
+          ['מפנה', c.referrer_name],
+          ['תאריך', date],
+          ['שעה', time],
+          ['הערות', notes],
+          ['נוסף ע"י', req.user.full_name],
+        ])
+      });
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -250,6 +292,22 @@ app.put('/api/clients/:id/dates/:dateId', auth, async (req, res) => {
     const { date, time, notes } = req.body;
     await db.collection('dates').updateOne({ _id: oid(req.params.dateId) }, { $set: { date, time, notes } });
     res.json({ success: true });
+    const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
+    if (c) {
+      const referrerEmail = await getReferrerEmail(c.referrer_name);
+      sendEmail({
+        to: referrerEmail,
+        subject: `מועד עודכן – ${c.first_name} ${c.last_name}`,
+        html: emailTemplate('תאריך חשוב עודכן', [
+          ['לקוח', `${c.first_name} ${c.last_name}`],
+          ['מפנה', c.referrer_name],
+          ['תאריך', date],
+          ['שעה', time],
+          ['הערות', notes],
+          ['עודכן ע"י', req.user.full_name],
+        ])
+      });
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -258,6 +316,7 @@ app.delete('/api/clients/:id/dates/:dateId', auth, async (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Products ───────────────────────────────────────────────────────────────────
 app.get('/api/clients/:id/products', auth, async (req, res) => {
   try {
     const products = await db.collection('products').find({ client_id: req.params.id }).sort({ created_at: -1 }).toArray();
@@ -268,22 +327,27 @@ app.get('/api/clients/:id/products', auth, async (req, res) => {
 app.post('/api/clients/:id/products', auth, async (req, res) => {
   try {
     const { product_name, price, status } = req.body;
-    const r = await db.collection('products').insertOne({ client_id: req.params.id, product_name, price, status: status || 'ממתין', created_at: now() });
+    const r = await db.collection('products').insertOne({
+      client_id: req.params.id, product_name, price, status: status || 'ממתין', created_at: now()
+    });
     await db.collection('clients').updateOne({ _id: oid(req.params.id) }, { $set: { updated_at: now() } });
     res.json({ id: r.insertedId.toString() });
     const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
-    if (c) sendEmail({
-      to: c.referrer_email,
-      subject: `מוצר חדש נוסף – ${c.first_name} ${c.last_name}`,
-      html: emailTemplate('מוצר חדש נוסף ללקוח', [
-        ['לקוח', `${c.first_name} ${c.last_name}`],
-        ['מפנה', c.referrer_name],
-        ['מוצר', product_name],
-        ['מחיר', price],
-        ['סטטוס', status || 'ממתין'],
-        ['נוסף ע"י', req.user.full_name],
-      ])
-    });
+    if (c) {
+      const referrerEmail = await getReferrerEmail(c.referrer_name);
+      sendEmail({
+        to: referrerEmail,
+        subject: `מוצר חדש נוסף – ${c.first_name} ${c.last_name}`,
+        html: emailTemplate('מוצר חדש נוסף ללקוח', [
+          ['לקוח', `${c.first_name} ${c.last_name}`],
+          ['מפנה', c.referrer_name],
+          ['מוצר', product_name],
+          ['מחיר', price],
+          ['סטטוס', status || 'ממתין'],
+          ['נוסף ע"י', req.user.full_name],
+        ])
+      });
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -293,18 +357,21 @@ app.put('/api/clients/:id/products/:productId', auth, async (req, res) => {
     await db.collection('products').updateOne({ _id: oid(req.params.productId) }, { $set: { product_name, price, status } });
     res.json({ success: true });
     const c = await db.collection('clients').findOne({ _id: oid(req.params.id) });
-    if (c) sendEmail({
-      to: c.referrer_email,
-      subject: `עדכון מוצר – ${c.first_name} ${c.last_name}`,
-      html: emailTemplate('סטטוס מוצר עודכן', [
-        ['לקוח', `${c.first_name} ${c.last_name}`],
-        ['מפנה', c.referrer_name],
-        ['מוצר', product_name],
-        ['מחיר', price],
-        ['סטטוס חדש', status],
-        ['עודכן ע"י', req.user.full_name],
-      ])
-    });
+    if (c) {
+      const referrerEmail = await getReferrerEmail(c.referrer_name);
+      sendEmail({
+        to: referrerEmail,
+        subject: `עדכון מוצר – ${c.first_name} ${c.last_name}`,
+        html: emailTemplate('סטטוס מוצר עודכן', [
+          ['לקוח', `${c.first_name} ${c.last_name}`],
+          ['מפנה', c.referrer_name],
+          ['מוצר', product_name],
+          ['מחיר', price],
+          ['סטטוס חדש', status],
+          ['עודכן ע"י', req.user.full_name],
+        ])
+      });
+    }
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
