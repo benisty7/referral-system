@@ -31,15 +31,15 @@ async function connectDB() {
 }
 
 // ── Email ──────────────────────────────────────────────────────────────────────
-const SMTP_USER = process.env.SMTP_USER || 'office@eb-law.org.il';
+const SMTP_USER = process.env.SMTP_USER || 'benisty.law@gmail.com';
 const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'office@eb-law.org.il';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'benisty.law@gmail.com';
 
 const mailer = SMTP_PASSWORD
   ? nodemailer.createTransport({
-      host: 'webmail.eb-law.org.il',
-      port: 465,
-      secure: true,
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
       auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
       tls: { rejectUnauthorized: false }
     })
