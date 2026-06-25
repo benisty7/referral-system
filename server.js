@@ -4,7 +4,6 @@ const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,22 +29,10 @@ async function connectDB() {
   }
 }
 
-// ── Email ──────────────────────────────────────────────────────────────────────
-const SMTP_USER = process.env.SMTP_USER || 'benisty.law@gmail.com';
-const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
+// ── Email (Resend API) ────────────────────────────────────────────────────────
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'benisty.law@gmail.com';
 
-const mailer = SMTP_PASSWORD
-  ? nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
-      tls: { rejectUnauthorized: false }
-    })
-  : null;
-
-// מחפש את המייל של המפנה לפי שם מלא או שם משתמש (username = כתובת מייל)
 async function getReferrerEmail(referrerName) {
   if (!referrerName || !db) return null;
   const user = await db.collection('users').findOne({
@@ -55,17 +42,26 @@ async function getReferrerEmail(referrerName) {
 }
 
 async function sendEmail({ to, subject, html }) {
-  if (!mailer) return;
+  if (!RESEND_API_KEY) return;
   const recipients = [ADMIN_EMAIL];
   if (to && to !== ADMIN_EMAIL) recipients.push(to);
   try {
-    await mailer.sendMail({
-      from: `"לוח הפניות - אלי בניסטי" <${SMTP_USER}>`,
-      to: recipients.join(', '),
-      subject,
-      html
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: 'לוח הפניות - אלי בניסטי <onboarding@resend.dev>',
+        to: recipients,
+        subject,
+        html
+      })
     });
-    console.log('Email sent to:', recipients.join(', '));
+    const data = await res.json();
+    if (res.ok) console.log('Email sent to:', recipients.join(', '));
+    else console.error('Email error:', JSON.stringify(data));
   } catch (e) {
     console.error('Email error:', e.message);
   }
