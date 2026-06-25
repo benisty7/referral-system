@@ -43,8 +43,8 @@ async function getReferrerEmail(referrerName) {
 
 async function sendEmail({ to, subject, html }) {
   if (!RESEND_API_KEY) return;
+  // TODO: add referrer email after domain verification at resend.com/domains
   const recipients = [ADMIN_EMAIL];
-  if (to && to !== ADMIN_EMAIL) recipients.push(to);
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
